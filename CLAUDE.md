@@ -24,6 +24,11 @@ the repository exists.
 - **GitHub-hosted runners only**, for builds and tests alike — no self-hosted runners.
 - **Smoke tests are separate jobs**, not steps appended to a build job. A separate job shares no
   filesystem with the build, so binaries reach it as an uploaded workflow artifact.
+- **Fully static linkage: the `<arch>-windows-static` triplets** — static libraries and static CRT,
+  so nothing but Windows system DLLs is needed. Not `-static-md`, not DLLs. Consequence: the
+  port's `fips` feature is unavailable (`"supports": "!static"` in its `vcpkg.json`).
+- **Both Debug and Release must build; how does not matter** — one `vcpkg install` producing both
+  or separate jobs are equally fine.
 
 ## Pitfalls
 
@@ -34,11 +39,14 @@ the repository exists.
 - **arm64 binaries cannot run on x64 runners.** MSVC cross-compiles arm64 on x64 fine, but an arm64
   smoke test needs an arm64 runner (`windows-11-arm`). x86 binaries run on x64 runners under WoW64.
 - **One `vcpkg install` builds both Debug and Release by default**; debug output lands under
-  `installed/<triplet>/debug/`. A triplet that sets `VCPKG_BUILD_TYPE` builds only one. Separate
-  Debug/Release jobs are a design choice, not something vcpkg requires.
-- **The triplet decides linkage and CRT:** `<arch>-windows` gives DLLs with the dynamic CRT, the
-  `-static` suffix static libraries with the static CRT, `-static-md` static libraries with the
-  dynamic CRT. Which of these ships is the owner's call, not an agent's default.
+  `installed/<triplet>/debug/`. A triplet that sets `VCPKG_BUILD_TYPE` builds only one.
+- **Only `x64-windows-static` is a built-in triplet**; `x86-windows-static` and
+  `arm64-windows-static` live in vcpkg's `triplets/community/`, and vcpkg warns about that —
+  expected, not an error.
+- **Static CRT binds the consumer.** Code linking these libraries, smoke tests included, must
+  compile with `/MT` (Release) or `/MTd` (Debug); mixing with `/MD` fails with LNK2038. Linking by
+  hand also needs `crypt32.lib` and `ws2_32.lib` — the port's CMake wrapper for
+  `find_package(OpenSSL)` adds exactly these for static Windows builds.
 - **Workflow artifacts expire** (90 days by default). Publishing GitHub Releases is a release job
   and needs the owner's decision (§6).
 - **Prefer `pwsh` steps and `.ps1` scripts over `.cmd`/`.bat`.** Files are LF (§9), and cmd.exe can
