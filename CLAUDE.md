@@ -60,6 +60,13 @@ the repository exists.
   only through `include/openssl/applink.c` compiled into the application (`NOTES-WINDOWS.md`;
   all three targets have uplink support), and OpenSSL-allocated memory goes back through
   `OPENSSL_free`. That is why `smoke.c` prints errors with `ERR_print_errors_cb`, not `_fp`.
+- **A DLL-build application must point OpenSSL at its own `legacy.dll`**
+  (`OSSL_PROVIDER_set_default_search_path` or `OPENSSL_MODULES`). Modules load by full path from
+  the compiled-in `MODULESDIR`, `C:\Program Files\OpenSSL\bin`, and on GitHub's Windows images
+  another OpenSSL's `legacy.dll` sits there — an unpointed load picks that one up silently.
+- **OpenSSL adds `/MD` to a shared build; vcpkg's `-MT` comes later on the command line and wins**
+  (both are in the DLL's embedded `compiler:` string). The import check in `smoke/run.ps1` is
+  what proves the result.
 - **Static-library consumers link the system libraries in `$systemLibs` of `smoke/run.ps1`**
   (from OpenSSL's `NOTES-WINDOWS.md`). The port's CMake wrapper for `find_package(OpenSSL)` adds only
   `crypt32` and `ws2_32`, leaving the rest to CMake's default MSVC libraries.
