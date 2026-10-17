@@ -28,7 +28,10 @@ done
 version=${port_version%%#*}
 port_revision=0
 [[ $port_version == *"#"* ]] && port_revision=${port_version#*#}
-tag="openssl-$version-port$port_revision"
+# Bumped by hand when the release contents change without a new port version.
+revision=$(tr -d '[:space:]' < release/revision)
+[[ $revision =~ ^[0-9]+$ ]] || { echo "release/revision is not a number: $revision" >&2; exit 1; }
+tag="openssl-$version-port$port_revision-r$revision"
 
 # downloadLocation looks like git+https://github.com/openssl/openssl@openssl-3.6.5
 source=$(sbom_field '.packages[] | select(.name == "openssl/openssl") | .downloadLocation' "${dirs[0]}")
@@ -55,7 +58,8 @@ done
 (cd "$dist" && sha256sum -- *.zip > SHA256SUMS)
 
 cat > "$dist/notes.md" <<EOF
-OpenSSL $version для Windows, собранный MSVC через vcpkg: статические библиотеки, Debug и Release.
+OpenSSL $version для Windows, собранный MSVC через vcpkg, Debug и Release. Обе сборки зависят
+только от системных DLL Windows.
 
 | | |
 | --- | --- |
@@ -64,12 +68,18 @@ OpenSSL $version для Windows, собранный MSVC через vcpkg: ст�
 | SHA512 архива исходников (проверен vcpkg) | \`$source_sha512\` |
 | Порт vcpkg | \`openssl $port_version\` |
 | vcpkg (\`builtin-baseline\`) | \`$baseline\` |
-| Коммит этого репозитория | \`$commit\` |
+| Коммит этого репозитория | \`$commit\`, ревизия сборки \`r$revision\` |
 | Прогон CI | ${run:-локальная сборка} |
 
-В каждом архиве: \`include/\`, \`lib/\` (Release, \`/MT\`), \`debug/lib/\` (Debug, \`/MTd\`),
-\`share/\` (CMake-конфиг, лицензия, SBOM). Системные библиотеки для линковки и проверки,
-которые прошёл каждый архив, — в [\`smoke/\`]($repo_url/tree/$commit/smoke).
+- \`*-windows-static\` — статические библиотеки: \`lib/\` (Release, \`/MT\`), \`debug/lib/\`
+  (Debug, \`/MTd\`).
+- \`*-windows-dll-mt\` — DLL со статическим CRT: \`bin/\` и \`debug/bin/\`, import-библиотеки
+  в \`lib/\` и \`debug/lib/\`. Приложению, которое передаёт OpenSSL \`FILE*\`, нужен
+  \`include/openssl/applink.c\`.
+
+В каждом архиве ещё \`include/\` и \`share/\` (CMake-конфиг, лицензия, SBOM). Системные
+библиотеки для линковки и проверки, которые прошёл каждый архив, — в
+[\`smoke/\`]($repo_url/tree/$commit/smoke).
 
 SHA-256 архивов:
 
@@ -79,4 +89,4 @@ $(cat "$dist/SHA256SUMS")
 EOF
 
 echo "tag=$tag"
-echo "title=OpenSSL $version (vcpkg $port_version)"
+echo "title=OpenSSL $version (vcpkg $port_version, r$revision)"

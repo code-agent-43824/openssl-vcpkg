@@ -2,5 +2,10 @@
   "dependencies": [
     "openssl"
   ],
-  "builtin-baseline": "a5f736224e85b32e25a8ffc52562333180396642"
+  "builtin-baseline": "a5f736224e85b32e25a8ffc52562333180396642",
+  "vcpkg-configuration": {
+    "overlay-triplets": [
+      "triplets"
+    ]
+  }
 }

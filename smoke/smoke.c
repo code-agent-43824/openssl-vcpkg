@@ -1,7 +1,7 @@
 /*
- * Smoke test for a static OpenSSL build: the library matches its headers, libcrypto computes a
- * known digest and an AEAD round trip, and libssl completes a TLS 1.3 handshake in-process.
- * Exit code 0 means every check passed.
+ * Smoke test for an OpenSSL build, static or DLL: the library matches its headers, libcrypto
+ * computes a known digest and an AEAD round trip, libssl completes a TLS 1.3 handshake
+ * in-process, and a BIO writes to the application's stdout. Exit code 0 means every check passed.
  */
 #include <stdio.h>
 #include <string.h>
@@ -16,11 +16,19 @@
 
 static int failures;
 
+/* Errors are printed by the application, not handed to OpenSSL as a FILE*: a DLL built with
+   the static CRT has a CRT of its own (see bio_on_app_stdout). */
+static int print_error(const char *str, size_t len, void *unused)
+{
+    (void)unused;
+    return fwrite(str, 1, len, stdout) == len;
+}
+
 static void check(int ok, const char *what)
 {
     printf("%s %s\n", ok ? "ok  " : "FAIL", what);
     if (!ok) {
-        ERR_print_errors_fp(stdout);
+        ERR_print_errors_cb(print_error, NULL);
         failures++;
     }
 }
@@ -181,6 +189,19 @@ done:
     return ok;
 }
 
+/* With DLLs built with the static CRT, the application's FILE* reaches OpenSSL only through
+   applink.c compiled into the application; without it OpenSSL aborts the process. */
+static int bio_on_app_stdout(void)
+{
+    BIO *bio = BIO_new_fp(stdout, BIO_NOCLOSE);
+    int ok = bio != NULL
+        && BIO_printf(bio, "BIO writes to the application's stdout\n") > 0
+        && BIO_flush(bio) == 1;
+
+    BIO_free(bio);
+    return ok;
+}
+
 int main(void)
 {
     printf("library: %s\n", OpenSSL_version(OPENSSL_VERSION));
@@ -191,6 +212,8 @@ int main(void)
     check(sha256_vector(), "SHA-256 test vector");
     check(aes_gcm_round_trip(), "AES-256-GCM round trip");
     check(tls13_handshake(), "TLS 1.3 handshake over a BIO pair");
+    fflush(stdout);
+    check(bio_on_app_stdout(), "BIO on the application's stdout");
 
     if (failures != 0) {
         printf("%d check(s) failed\n", failures);

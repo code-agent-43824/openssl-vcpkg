@@ -15,7 +15,7 @@ defaults:
 
 jobs:
   build:
-    name: build ${{ matrix.arch }}
+    name: build ${{ matrix.arch }} ${{ matrix.linkage }}
     # arm64 is cross-compiled here too; only running arm64 binaries needs an arm64 runner.
     runs-on: windows-2025
     timeout-minutes: 90
@@ -23,8 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         arch: [x86, x64, arm64]
+        # static: <arch>-windows-static; dll-mt: the overlay triplets in triplets/
+        linkage: [static, dll-mt]
     env:
-      TRIPLET: ${{ matrix.arch }}-windows-static
+      TRIPLET: ${{ matrix.arch }}-windows-${{ matrix.linkage }}
       VCPKG_ROOT: ${{ github.workspace }}\vcpkg
       VCPKG_DISABLE_METRICS: 1
     steps:
@@ -76,7 +78,7 @@ jobs:
             }
 
   smoke:
-    name: smoke ${{ matrix.arch }} ${{ matrix.config }}
+    name: smoke ${{ matrix.arch }} ${{ matrix.linkage }} ${{ matrix.config }}
     needs: build
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -84,6 +86,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: [x86, x64, arm64]
+        linkage: [static, dll-mt]
         config: [Debug, Release]
         include:
           - arch: x86
@@ -99,14 +102,16 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: openssl-${{ matrix.arch }}-windows-static
+          name: openssl-${{ matrix.arch }}-windows-${{ matrix.linkage }}
           path: openssl
 
       - name: Build and run smoke test
-        run: ./smoke/run.ps1 -Arch ${{ matrix.arch }} -Config ${{ matrix.config }} -OpenSslRoot openssl
+        run: >-
+          ./smoke/run.ps1 -Arch ${{ matrix.arch }} -Linkage ${{ matrix.linkage }}
+          -Config ${{ matrix.config }} -OpenSslRoot openssl
 
   release:
-    # Publishes one release per openssl port version; later runs of the same version skip it.
+    # Publishes one release per openssl port version and release/revision; reruns skip it.
     needs: [build, smoke]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
