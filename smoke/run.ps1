@@ -68,15 +68,13 @@ foreach ($binary in $binaries) {
     $name = Split-Path $binary -Leaf
     $headers = & dumpbin /nologo /headers $binary | Out-String
     if (-not $headers.Contains($machine)) { throw "$name is not $Arch" }
-    $imports = @(& dumpbin /nologo /dependents $binary | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '\.dll$' })
+    # Bare DLL names only; the "Dump of file <path>" line also ends in .dll for a DLL.
+    $imports = @(& dumpbin /nologo /dependents $binary | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[\w.-]+\.dll$' })
     Write-Output "${name}: $machine; imports $($imports -join ', ')"
     $forbidden = @($imports | Where-Object { $_ -match $crtDll -or ($Linkage -eq 'static' -and $_ -match $opensslDll) })
     if ($forbidden) { throw "$name imports non-system DLLs: $($forbidden -join ', ')" }
-}
-if ($Linkage -eq 'dll-mt') {
-    $exeImports = (& dumpbin /nologo /dependents $exe | Out-String)
-    if ($exeImports -notmatch 'libcrypto' -or $exeImports -notmatch 'libssl') {
-        throw 'smoke.exe does not import the OpenSSL DLLs'
+    if ($binary -eq $exe -and $Linkage -eq 'dll-mt' -and @($imports -match $opensslDll).Count -lt 2) {
+        throw 'smoke.exe does not import both OpenSSL DLLs'
     }
 }
 

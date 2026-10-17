@@ -1,0 +1,101 @@
+name: build and test
+
+# One build variant: builds it and smoke-tests it. ci.yml calls this once per variant, so each
+# smoke job waits only for its own build, not for the whole matrix.
+on:
+  workflow_call:
+    inputs:
+      arch:
+        description: x86, x64 or arm64
+        required: true
+        type: string
+      linkage:
+        description: static (<arch>-windows-static) or dll-mt (overlay triplet in triplets/)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  build:
+    # arm64 is cross-compiled here too; only running arm64 binaries needs an arm64 runner.
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      TRIPLET: ${{ inputs.arch }}-windows-${{ inputs.linkage }}
+      VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+      VCPKG_DISABLE_METRICS: 1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # vcpkg.json's builtin-baseline is the single pin: the vcpkg tool and the port versions
+      # both come from that commit.
+      - name: Read vcpkg baseline
+        id: baseline
+        run: |
+          $sha = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+          "sha=$sha" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/checkout@v7
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ steps.baseline.outputs.sha }}
+          path: vcpkg
+          persist-credentials: false
+
+      - name: Bootstrap vcpkg
+        run: '& "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics'
+
+      # One install builds both Debug (debug/) and Release.
+      - name: Build OpenSSL
+        run: '& "$env:VCPKG_ROOT\vcpkg.exe" install --triplet $env:TRIPLET'
+
+      - name: List built libraries
+        run: |
+          Get-ChildItem "vcpkg_installed\$env:TRIPLET" -Recurse -Include *.lib, *.dll, *.pdb |
+            Format-Table FullName, Length -AutoSize | Out-String -Width 300
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: openssl-${{ env.TRIPLET }}
+          path: vcpkg_installed/${{ env.TRIPLET }}
+          if-no-files-found: error
+
+      - name: Show vcpkg build logs
+        if: failure()
+        run: |
+          Get-ChildItem "$env:VCPKG_ROOT\buildtrees" -Recurse -Filter *.log -ErrorAction SilentlyContinue |
+            ForEach-Object {
+              "::group::$($_.FullName)"
+              Get-Content $_.FullName -Tail 200
+              "::endgroup::"
+            }
+
+  smoke:
+    needs: build
+    runs-on: ${{ inputs.arch == 'arm64' && 'windows-11-arm' || 'windows-2025' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: openssl-${{ inputs.arch }}-windows-${{ inputs.linkage }}
+          path: openssl
+
+      - name: Smoke test Debug
+        run: ./smoke/run.ps1 -Arch ${{ inputs.arch }} -Linkage ${{ inputs.linkage }} -Config Debug -OpenSslRoot openssl
+
+      # Runs even when Debug failed, so one job reports both configurations.
+      - name: Smoke test Release
+        if: ${{ !cancelled() }}
+        run: ./smoke/run.ps1 -Arch ${{ inputs.arch }} -Linkage ${{ inputs.linkage }} -Config Release -OpenSslRoot openssl

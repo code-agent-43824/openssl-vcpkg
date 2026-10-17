@@ -86,8 +86,8 @@ Nothing Windows-specific builds in the container (see Pitfalls); CI is the build
 - **Follow a run:** unauthenticated reads of the GitHub API work from the container, e.g.
   `curl -s "https://api.github.com/repos/code-agent-43824/openssl-vcpkg/actions/runs?head_sha=<sha>"`,
   then `.../actions/runs/<id>/jobs`; job logs and artifact download links through the GitHub tools.
-- **One triplet or configuration:** every matrix entry — architecture × linkage, and × configuration
-  for smoke — is an independent job (`fail-fast: false`), so its result is its own job log.
+- **One variant:** each architecture × linkage is its own build job and smoke job
+  (`fail-fast: false`); the smoke job reports Debug and Release as separate steps.
 - **Update OpenSSL:** move `builtin-baseline` in `vcpkg.json` to a newer `microsoft/vcpkg` commit.
 
 ## Map of the code
@@ -95,9 +95,15 @@ Nothing Windows-specific builds in the container (see Pitfalls); CI is the build
 - `vcpkg.json` — manifest: the `openssl` dependency, `builtin-baseline`, and `triplets/` as overlay
   triplets.
 - `triplets/<arch>-windows-dll-mt.cmake` — dynamic library linkage with the static CRT.
-- `.github/workflows/ci.yml` — three jobs, each gated on the previous one:
-  - `build` — architecture × linkage (`static`, `dll-mt`; the triplet is
-    `<arch>-windows-<linkage>`) on an x64 runner: checks out `microsoft/vcpkg` at the baseline
+- `.github/workflows/ci.yml` — calls `build-and-test.yml` once per architecture × linkage
+  (`static`, `dll-mt`; the triplet is `<arch>-windows-<linkage>`), then `release` after all of
+  them. A matrix over a reusable workflow is what lets each smoke job start as soon as its own
+  build finishes; `needs` on a plain matrix job waits for every entry.
+  - `release` — on `main` only, on Linux: `release/prepare.sh` packages the artifacts, then
+    `gh release create` publishes unless the tag already exists. The tag is created by the
+    release, not pushed from a session (§12).
+- `.github/workflows/build-and-test.yml` — one variant, two jobs:
+  - `build` — on an x64 runner: checks out `microsoft/vcpkg` at the baseline
     into `vcpkg/`, bootstraps it, runs `vcpkg install` in manifest mode and uploads
     `vcpkg_installed/<triplet>/` as artifact `openssl-<triplet>`: `include/`, `lib/` (Release),
     `debug/lib/` (Debug), `share/` (CMake config, license, SBOM `vcpkg.spdx.json`), and for
@@ -105,11 +111,8 @@ Nothing Windows-specific builds in the container (see Pitfalls); CI is the build
     embedded (`/Z7`). `Program Files/Common Files/SSL/` holds sample configs for
     the compiled-in default `OPENSSLDIR`; the port leaves `openssldir` unset on purpose (its
     comment cites CVE-2019-12572). On failure the tails of vcpkg's build logs go into the job log.
-  - `smoke` — architecture × linkage × configuration, each on a runner of its own architecture:
-    downloads the artifact and runs `smoke/run.ps1`.
-  - `release` — on `main` only, on Linux: `release/prepare.sh` packages the artifacts, then
-    `gh release create` publishes unless the tag already exists. The tag is created by the
-    release, not pushed from a session (§12).
+  - `smoke` — on a runner of the variant's architecture: downloads the artifact and runs
+    `smoke/run.ps1` for Debug, then for Release even if Debug failed.
 - `smoke/smoke.c` — the test program: library version against headers, a SHA-256 test vector,
   an AES-256-GCM round trip, a TLS 1.3 handshake between in-process client and server, a BIO on
   the application's stdout (passes in the DLL build only through applink).

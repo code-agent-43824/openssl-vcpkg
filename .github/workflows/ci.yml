@@ -9,110 +9,23 @@ on:
 permissions:
   contents: read
 
-defaults:
-  run:
-    shell: pwsh
-
 jobs:
-  build:
-    name: build ${{ matrix.arch }} ${{ matrix.linkage }}
-    # arm64 is cross-compiled here too; only running arm64 binaries needs an arm64 runner.
-    runs-on: windows-2025
-    timeout-minutes: 90
+  variant:
+    name: ${{ matrix.arch }} ${{ matrix.linkage }}
     strategy:
       fail-fast: false
       matrix:
         arch: [x86, x64, arm64]
         # static: <arch>-windows-static; dll-mt: the overlay triplets in triplets/
         linkage: [static, dll-mt]
-    env:
-      TRIPLET: ${{ matrix.arch }}-windows-${{ matrix.linkage }}
-      VCPKG_ROOT: ${{ github.workspace }}\vcpkg
-      VCPKG_DISABLE_METRICS: 1
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      # vcpkg.json's builtin-baseline is the single pin: the vcpkg tool and the port versions
-      # both come from that commit.
-      - name: Read vcpkg baseline
-        id: baseline
-        run: |
-          $sha = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
-          "sha=$sha" >> $env:GITHUB_OUTPUT
-
-      - uses: actions/checkout@v7
-        with:
-          repository: microsoft/vcpkg
-          ref: ${{ steps.baseline.outputs.sha }}
-          path: vcpkg
-          persist-credentials: false
-
-      - name: Bootstrap vcpkg
-        run: '& "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics'
-
-      # One install builds both Debug (debug/lib) and Release (lib).
-      - name: Build OpenSSL
-        run: '& "$env:VCPKG_ROOT\vcpkg.exe" install --triplet $env:TRIPLET'
-
-      - name: List built libraries
-        run: |
-          Get-ChildItem "vcpkg_installed\$env:TRIPLET" -Recurse -Include *.lib, *.dll, *.pdb |
-            Format-Table FullName, Length -AutoSize | Out-String -Width 300
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: openssl-${{ env.TRIPLET }}
-          path: vcpkg_installed/${{ env.TRIPLET }}
-          if-no-files-found: error
-
-      - name: Show vcpkg build logs
-        if: failure()
-        run: |
-          Get-ChildItem "$env:VCPKG_ROOT\buildtrees" -Recurse -Filter *.log -ErrorAction SilentlyContinue |
-            ForEach-Object {
-              "::group::$($_.FullName)"
-              Get-Content $_.FullName -Tail 200
-              "::endgroup::"
-            }
-
-  smoke:
-    name: smoke ${{ matrix.arch }} ${{ matrix.linkage }} ${{ matrix.config }}
-    needs: build
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x86, x64, arm64]
-        linkage: [static, dll-mt]
-        config: [Debug, Release]
-        include:
-          - arch: x86
-            runner: windows-2025
-          - arch: x64
-            runner: windows-2025
-          - arch: arm64
-            runner: windows-11-arm
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: openssl-${{ matrix.arch }}-windows-${{ matrix.linkage }}
-          path: openssl
-
-      - name: Build and run smoke test
-        run: >-
-          ./smoke/run.ps1 -Arch ${{ matrix.arch }} -Linkage ${{ matrix.linkage }}
-          -Config ${{ matrix.config }} -OpenSslRoot openssl
+    uses: ./.github/workflows/build-and-test.yml
+    with:
+      arch: ${{ matrix.arch }}
+      linkage: ${{ matrix.linkage }}
 
   release:
     # Publishes one release per openssl port version and release/revision; reruns skip it.
-    needs: [build, smoke]
+    needs: variant
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
