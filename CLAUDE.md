@@ -43,10 +43,13 @@ the repository exists.
 - **Only `x64-windows-static` is a built-in triplet**; `x86-windows-static` and
   `arm64-windows-static` live in vcpkg's `triplets/community/`, and vcpkg warns about that —
   expected, not an error.
-- **Static CRT binds the consumer.** Code linking these libraries, smoke tests included, must
-  compile with `/MT` (Release) or `/MTd` (Debug); mixing with `/MD` fails with LNK2038. Linking by
+- **The consumer's link picks the CRT.** OpenSSL's static build compiles with `/MT` (Release) or
+  `/MTd` (Debug) plus `/Zl`, so the libraries carry no `/DEFAULTLIB` directive. A consumer that
+  must not depend on CRT DLLs, smoke tests included, compiles with `/MT` / `/MTd` itself. Linking by
   hand also needs `crypt32.lib` and `ws2_32.lib` — the port's CMake wrapper for
   `find_package(OpenSSL)` adds exactly these for static Windows builds.
+- **The flags a library was built with are embedded in it** as OpenSSL's `compiler: ...` string,
+  next to `OPENSSLDIR:`; `grep -a` on the `.lib` shows them without a Windows machine.
 - **Workflow artifacts expire** (90 days by default). Publishing GitHub Releases is a release job
   and needs the owner's decision (§6).
 - **Prefer `pwsh` steps and `.ps1` scripts over `.cmd`/`.bat`.** Files are LF (§9), and cmd.exe can
@@ -74,8 +77,11 @@ Nothing builds in the container (see Pitfalls); CI is the build.
   `microsoft/vcpkg` at the baseline into `vcpkg/`, bootstraps it, runs `vcpkg install` in
   manifest mode into `vcpkg_installed/<triplet>/` and uploads that directory as artifact
   `openssl-<triplet>`: `include/`, `lib/` (Release), `debug/lib/` (Debug), `share/` (CMake
-  config, license). The "List built libraries" step logs what was produced; on failure, "Show
-  vcpkg build logs" prints the tails of vcpkg's build logs.
+  config, license). There are no PDBs — debug info is embedded (`/Z7`). `Program Files/Common
+  Files/SSL/` holds sample configs for the compiled-in default `OPENSSLDIR`; the port leaves
+  `openssldir` unset on purpose (its comment cites CVE-2019-12572). The "List built libraries"
+  step logs what was produced; on failure, "Show vcpkg build logs" prints the tails of vcpkg's
+  build logs.
 - `.gitignore` — the two directories CI creates, for a local Windows reproduction.
 
 ## Version discipline
