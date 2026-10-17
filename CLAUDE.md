@@ -52,8 +52,35 @@ the repository exists.
 - **Prefer `pwsh` steps and `.ps1` scripts over `.cmd`/`.bat`.** Files are LF (§9), and cmd.exe can
   mis-parse labels in LF-only batch files.
 
+## Commands
+
+Nothing builds in the container (see Pitfalls); CI is the build.
+
+- **Lint the workflow before pushing:** `actionlint .github/workflows/build.yml`. Not preinstalled;
+  `pip install actionlint-py` in a venv provides it.
+- **Run CI:** push to `main` touching anything but `*.md` / `LICENSE` (`paths-ignore` in the
+  workflow). The owner can also start it by hand (`workflow_dispatch`).
+- **Follow a run:** unauthenticated reads of the GitHub API work from the container, e.g.
+  `curl -s "https://api.github.com/repos/code-agent-43824/openssl-vcpkg/actions/runs?head_sha=<sha>"`,
+  then `.../actions/runs/<id>/jobs`; job logs through the GitHub tools.
+- **One triplet:** each matrix entry is an independent job (`fail-fast: false`), so a triplet's
+  result is its own job log. No narrower unit exists.
+- **Update OpenSSL:** move `builtin-baseline` in `vcpkg.json` to a newer `microsoft/vcpkg` commit.
+
+## Map of the code
+
+- `vcpkg.json` — manifest: the `openssl` dependency and `builtin-baseline`.
+- `.github/workflows/build.yml` — one job per triplet on an x64 runner: checks out
+  `microsoft/vcpkg` at the baseline into `vcpkg/`, bootstraps it, runs `vcpkg install` in
+  manifest mode into `vcpkg_installed/<triplet>/` and uploads that directory as artifact
+  `openssl-<triplet>`: `include/`, `lib/` (Release), `debug/lib/` (Debug), `share/` (CMake
+  config, license). The "List built libraries" step logs what was produced; on failure, "Show
+  vcpkg build logs" prints the tails of vcpkg's build logs.
+- `.gitignore` — the two directories CI creates, for a local Windows reproduction.
+
 ## Version discipline
 
-The OpenSSL version is whatever vcpkg resolves for the `openssl` port: the vcpkg commit or
-manifest `builtin-baseline`, plus any `overrides`. A vcpkg preinstalled on a runner image moves
-when the image updates, so an unpinned vcpkg changes OpenSSL silently.
+The OpenSSL version is the `openssl` port as of `builtin-baseline` in `vcpkg.json`. CI checks out
+vcpkg at that same commit, so the tool and the ports move together and this is the only pin. Do
+not switch to the vcpkg preinstalled on the runner image: it moves when the image updates and
+would change OpenSSL silently.
