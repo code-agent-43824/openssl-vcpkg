@@ -124,7 +124,8 @@ Nothing Windows-specific builds in the container (see Pitfalls); CI is the build
   known-answer tests whose vectors come from the RFC or NIST file named beside each one; RSA,
   ECDSA, ECDH and AEAD round trips that must also reject changed data or another key; the
   `default` and `legacy` providers (`legacy` is built into `libcrypto` in the static build —
-  the port configures it `no-module` — and is `legacy.dll` in the DLL build).
+  the port configures it `no-module` — and is `legacy.dll` in the DLL build). On Windows it also
+  checks which files libcrypto and `legacy.dll` were actually loaded from.
 - `smoke/run.ps1` — enters the MSVC environment for the target and compiles both programs with
   `/MT` / `/MTd` (plus `applink.c` for `dll-mt`, whose DLLs it copies next to the executables).
   Rejects any binary of the wrong machine type or importing CRT DLLs; a static build's executables

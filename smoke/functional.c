@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include <openssl/core_names.h>
+#include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
@@ -690,29 +691,95 @@ static int executable_dir(char *dir, size_t size)
     return 1;
 }
 
+#ifdef _WIN32
+/* Prints the file a loaded module came from and checks that it sits in exe_dir. */
+static void module_location(HMODULE module, const char *what, const char *exe_dir)
+{
+    char path[MAX_PATH + 1], label[96];
+    char *slash = NULL;
+    DWORD len = GetModuleFileNameA(module, path, sizeof path);
+
+    if (len != 0 && len < sizeof path) {
+        printf("     %s: %s\n", what, path);
+        slash = strrchr(path, '\\');
+        if (slash != NULL)
+            *slash = '\0';
+    }
+    snprintf(label, sizeof label, "%s comes from the executable's directory", what);
+    check(slash != NULL && _stricmp(path, exe_dir) == 0, label);
+}
+
+/* The module holding libcrypto's code: the executable in the static build, our DLL next to it
+   in the DLL build. The version string lives in libcrypto's data, unlike a function address,
+   which for an imported function would point at a stub in the executable. */
+static void libcrypto_location(const char *exe_dir)
+{
+    HMODULE module = NULL;
+
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                                | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            OpenSSL_version(OPENSSL_VERSION), &module)) {
+        check(0, "libcrypto: module of the running code");
+        return;
+    }
+    module_location(module, "libcrypto", exe_dir);
+}
+
+/* In the static build no legacy.dll is loaded: the provider is part of libcrypto. */
+static void legacy_module_location(const char *exe_dir)
+{
+    HMODULE module = GetModuleHandleA("legacy.dll");
+
+    if (module == NULL)
+        printf("     legacy provider: built into libcrypto\n");
+    else
+        module_location(module, "legacy.dll", exe_dir);
+}
+
+/* The compiled-in module directory is C:\Program Files\OpenSSL\bin, where a machine may hold
+   another OpenSSL's modules; GitHub's Windows images do. */
+static void foreign_module_at_compiled_in_dir(void)
+{
+    const char *info = OpenSSL_version(OPENSSL_MODULES_DIR); /* MODULESDIR: "<dir>" */
+    const char *first = strchr(info, '"'), *last = first != NULL ? strchr(first + 1, '"') : NULL;
+    char path[MAX_PATH + 1];
+
+    printf("     compiled-in %s\n", info);
+    if (last != NULL && (size_t)(last - first) + sizeof "\\legacy.dll" < sizeof path) {
+        snprintf(path, sizeof path, "%.*s\\legacy.dll", (int)(last - first - 1), first + 1);
+        printf("     %s: %s\n", path,
+               GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES ? "absent" : "present");
+    }
+}
+#endif
+
 static void providers(void)
 {
     OSSL_PROVIDER *def, *legacy;
     char dir[1024];
+    int have_dir = executable_dir(dir, sizeof dir);
 
     section("providers");
     /* Loading any provider explicitly stops the default one from loading on its own. */
     def = OSSL_PROVIDER_load(NULL, "default");
     check(def != NULL, "default provider loads");
 
-    /* Built into libcrypto in the static build; a separate module in the DLL build, which the
-       compiled-in module path does not reach, so the directory of the executable is tried. */
+    /* An application of the DLL build ships legacy.dll next to itself and points OpenSSL there;
+       the compiled-in directory is not ours (see foreign_module_at_compiled_in_dir). The static
+       build has the provider inside libcrypto and finds it regardless of the path. */
+#ifdef _WIN32
+    if (have_dir)
+        libcrypto_location(dir);
+    foreign_module_at_compiled_in_dir();
+#endif
+    check(have_dir && OSSL_PROVIDER_set_default_search_path(NULL, dir) == 1,
+          "module search path set to the executable's directory");
     legacy = OSSL_PROVIDER_load(NULL, "legacy");
-    if (legacy != NULL) {
-        printf("     legacy provider: found without a search path\n");
-    } else if (executable_dir(dir, sizeof dir)) {
-        ERR_clear_error();
-        OSSL_PROVIDER_set_default_search_path(NULL, dir);
-        legacy = OSSL_PROVIDER_load(NULL, "legacy");
-        if (legacy != NULL)
-            printf("     legacy provider: loaded from %s\n", dir);
-    }
     check(legacy != NULL, "legacy provider loads");
+#ifdef _WIN32
+    if (legacy != NULL && have_dir)
+        legacy_module_location(dir);
+#endif
     check(legacy != NULL && digest_matches("MD4", "abc", "a448017aaf21d8525fc10ae87aa6729d"),
           "MD4 from the legacy provider: RFC 1320");
     check(digest_matches("SHA256", "abc", sha256_abc), "default provider still serves SHA-256");
