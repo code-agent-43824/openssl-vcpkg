@@ -78,8 +78,9 @@ foreach ($binary in $binaries) {
     Write-Output "${name}: $machine; imports $($imports -join ', ')"
     $forbidden = @($imports | Where-Object { $_ -match $crtDll -or ($Linkage -eq 'static' -and $_ -match $opensslDll) })
     if ($forbidden) { throw "$name imports non-system DLLs: $($forbidden -join ', ')" }
-    if ($exes -contains $binary -and $Linkage -eq 'dll-mt' -and @($imports -match $opensslDll).Count -lt 2) {
-        throw "$name does not import both OpenSSL DLLs"
+    # The linker keeps only the DLLs a program calls: functional.exe needs libcrypto alone.
+    if ($exes -contains $binary -and $Linkage -eq 'dll-mt' -and -not ($imports -match '^libcrypto')) {
+        throw "$name does not import the libcrypto DLL"
     }
 }
 

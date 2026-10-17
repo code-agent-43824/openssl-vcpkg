@@ -128,7 +128,8 @@ Nothing Windows-specific builds in the container (see Pitfalls); CI is the build
 - `smoke/run.ps1` — enters the MSVC environment for the target and compiles both programs with
   `/MT` / `/MTd` (plus `applink.c` for `dll-mt`, whose DLLs it copies next to the executables).
   Rejects any binary of the wrong machine type or importing CRT DLLs; a static build's executables
-  must not import OpenSSL DLLs, a DLL build's must. Then runs both, even if the first fails.
+  must not import OpenSSL DLLs, a DLL build's must import libcrypto (the linker drops an unused
+  libssl import). Then runs both, even if the first fails.
 - `release/prepare.sh` — checks that all artifacts carry one port version, zips each, writes
   `SHA256SUMS` and `notes.md` (version, upstream tag and commit, source SHA512, port version,
   baseline, revision, archive hashes) and prints the tag and title.
