@@ -97,8 +97,10 @@ Nothing Windows-specific builds in the container (see Pitfalls); CI is the build
 - `triplets/<arch>-windows-dll-mt.cmake` — dynamic library linkage with the static CRT.
 - `.github/workflows/ci.yml` — calls `build-and-test.yml` once per architecture × linkage
   (`static`, `dll-mt`; the triplet is `<arch>-windows-<linkage>`), then `release` after all of
-  them. A matrix over a reusable workflow is what lets each smoke job start as soon as its own
-  build finishes; `needs` on a plain matrix job waits for every entry.
+  them. Reusable-workflow calls are what let each smoke job start as soon as its own build
+  finishes (`needs` on a matrix job waits for every entry). They are six explicit jobs, not a
+  matrix, so the run graph shows each variant as its own build → smoke card — the owner's
+  request; a new variant goes into `release`'s `needs` too.
   - `release` — on `main` only, on Linux: `release/prepare.sh` packages the artifacts, then
     `gh release create` publishes unless the tag already exists. The tag is created by the
     release, not pushed from a session (§12).

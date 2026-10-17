@@ -9,23 +9,45 @@ on:
 permissions:
   contents: read
 
+# One job per variant rather than a matrix: each gets its own build -> smoke card in the run
+# graph, where a matrix of reusable-workflow calls is drawn as a single list. Each variant's
+# smoke job waits only for its own build.
+# linkage: static is <arch>-windows-static; dll-mt is the overlay triplet in triplets/.
 jobs:
-  variant:
-    name: ${{ matrix.arch }} ${{ matrix.linkage }}
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x86, x64, arm64]
-        # static: <arch>-windows-static; dll-mt: the overlay triplets in triplets/
-        linkage: [static, dll-mt]
+  x86-static:
+    name: x86 static
     uses: ./.github/workflows/build-and-test.yml
-    with:
-      arch: ${{ matrix.arch }}
-      linkage: ${{ matrix.linkage }}
+    with: {arch: x86, linkage: static}
+
+  x86-dll-mt:
+    name: x86 dll-mt
+    uses: ./.github/workflows/build-and-test.yml
+    with: {arch: x86, linkage: dll-mt}
+
+  x64-static:
+    name: x64 static
+    uses: ./.github/workflows/build-and-test.yml
+    with: {arch: x64, linkage: static}
+
+  x64-dll-mt:
+    name: x64 dll-mt
+    uses: ./.github/workflows/build-and-test.yml
+    with: {arch: x64, linkage: dll-mt}
+
+  arm64-static:
+    name: arm64 static
+    uses: ./.github/workflows/build-and-test.yml
+    with: {arch: arm64, linkage: static}
+
+  arm64-dll-mt:
+    name: arm64 dll-mt
+    uses: ./.github/workflows/build-and-test.yml
+    with: {arch: arm64, linkage: dll-mt}
 
   release:
     # Publishes one release per openssl port version and release/revision; reruns skip it.
-    needs: variant
+    # Lists every variant: a variant missing here could be left out of the release.
+    needs: [x86-static, x86-dll-mt, x64-static, x64-dll-mt, arm64-static, arm64-dll-mt]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
