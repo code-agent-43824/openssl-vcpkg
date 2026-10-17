@@ -1,11 +1,12 @@
-# Builds smoke.c against one configuration of an OpenSSL artifact with MSVC, checks that every
-# binary has the target architecture and imports only Windows system DLLs, then runs the test.
+# Builds the test programs (smoke.c, functional.c) against one configuration of an OpenSSL
+# artifact with MSVC, checks that every binary has the target architecture and imports only
+# Windows system DLLs, then runs both.
 #
 #   ./smoke/run.ps1 -Arch x64 -Linkage static -Config Release -OpenSslRoot <unpacked artifact>
 #
 # -Linkage static: the artifact of <arch>-windows-static, linked into the executable.
 # -Linkage dll-mt: the artifact of <arch>-windows-dll-mt; its DLLs are copied next to the
-#                  executable and checked too, and applink.c is compiled in (NOTES-WINDOWS.md).
+#                  executables and checked too, and applink.c is compiled in (NOTES-WINDOWS.md).
 
 param(
     [Parameter(Mandatory)][ValidateSet('x86', 'x64', 'arm64')][string]$Arch,
@@ -23,11 +24,12 @@ $prefix = if ($Config -eq 'Debug') { Join-Path $root 'debug' } else { $root }
 $crt = if ($Config -eq 'Debug') { '/MTd' } else { '/MT' }
 # OpenSSL's NOTES-WINDOWS.md: a static build is linked with these system libraries.
 $systemLibs = 'ws2_32.lib', 'gdi32.lib', 'advapi32.lib', 'crypt32.lib', 'user32.lib'
-$sources = @(Join-Path $PSScriptRoot 'smoke.c')
+$tests = 'smoke', 'functional'
+$extraSources = @()
 if ($Linkage -eq 'dll-mt') {
     $applink = Join-Path $root 'include\openssl\applink.c'
     if (-not (Test-Path $applink)) { throw "$applink is missing from the artifact" }
-    $sources += $applink
+    $extraSources += $applink
 }
 
 # MSVC environment for the target, native or cross-compiling from the machine's own architecture.
@@ -40,17 +42,20 @@ Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
 Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments "-arch=$targetArch -host_arch=$hostArch -no_logo"
 
 $OutDir = (New-Item -ItemType Directory -Force $OutDir).FullName
-$exe = Join-Path $OutDir 'smoke.exe'
+$exes = @($tests | ForEach-Object { Join-Path $OutDir "$_.exe" })
 Push-Location $OutDir # object files land in the current directory
 try {
-    & cl /nologo /W3 $crt "/I$root\include" "/Fe$exe" @sources `
-        /link "/LIBPATH:$prefix\lib" libssl.lib libcrypto.lib @systemLibs
-    if ($LASTEXITCODE) { throw "cl failed with exit code $LASTEXITCODE" }
+    foreach ($test in $tests) {
+        $sources = @(Join-Path $PSScriptRoot "$test.c") + $extraSources
+        & cl /nologo /W3 $crt "/I$root\include" "/Fe$OutDir\$test.exe" @sources `
+            /link "/LIBPATH:$prefix\lib" libssl.lib libcrypto.lib @systemLibs
+        if ($LASTEXITCODE) { throw "cl failed for $test.c with exit code $LASTEXITCODE" }
+    }
 } finally {
     Pop-Location
 }
 
-$binaries = @($exe)
+$binaries = @($exes)
 if ($Linkage -eq 'dll-mt') {
     $dlls = @(Get-ChildItem (Join-Path $prefix 'bin') -Filter *.dll)
     if (-not $dlls) { throw "no DLLs in $prefix\bin" }
@@ -73,10 +78,17 @@ foreach ($binary in $binaries) {
     Write-Output "${name}: $machine; imports $($imports -join ', ')"
     $forbidden = @($imports | Where-Object { $_ -match $crtDll -or ($Linkage -eq 'static' -and $_ -match $opensslDll) })
     if ($forbidden) { throw "$name imports non-system DLLs: $($forbidden -join ', ')" }
-    if ($binary -eq $exe -and $Linkage -eq 'dll-mt' -and @($imports -match $opensslDll).Count -lt 2) {
-        throw 'smoke.exe does not import both OpenSSL DLLs'
+    if ($exes -contains $binary -and $Linkage -eq 'dll-mt' -and @($imports -match $opensslDll).Count -lt 2) {
+        throw "$name does not import both OpenSSL DLLs"
     }
 }
 
-& $exe
-if ($LASTEXITCODE) { throw "smoke.exe failed with exit code $LASTEXITCODE" }
+# Both programs run even when the first fails, so one run reports everything.
+$failed = @()
+foreach ($exe in $exes) {
+    $name = Split-Path $exe -Leaf
+    Write-Output "`n=== $name"
+    & $exe
+    if ($LASTEXITCODE) { $failed += "$name (exit code $LASTEXITCODE)" }
+}
+if ($failed) { throw "failed: $($failed -join ', ')" }

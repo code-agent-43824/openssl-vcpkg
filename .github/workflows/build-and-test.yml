@@ -92,10 +92,10 @@ jobs:
           name: openssl-${{ inputs.arch }}-windows-${{ inputs.linkage }}
           path: openssl
 
-      - name: Smoke test Debug
+      - name: Test Debug
         run: ./smoke/run.ps1 -Arch ${{ inputs.arch }} -Linkage ${{ inputs.linkage }} -Config Debug -OpenSslRoot openssl
 
       # Runs even when Debug failed, so one job reports both configurations.
-      - name: Smoke test Release
+      - name: Test Release
         if: ${{ !cancelled() }}
         run: ./smoke/run.ps1 -Arch ${{ inputs.arch }} -Linkage ${{ inputs.linkage }} -Config Release -OpenSslRoot openssl

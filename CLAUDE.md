@@ -11,10 +11,11 @@ them is restated here. `AGENTS.md` is a byte-for-byte copy — refresh it with t
 ## What this repository is for
 
 Windows builds of OpenSSL compiled by MSVC through vcpkg on GitHub-hosted runners — static
-libraries and DLLs — smoke-tested and published as GitHub Releases. The product, its requirements and stages are in
+libraries and DLLs — tested on runners of their own architecture and published as GitHub
+Releases. The product, its requirements and stages are in
 `docs/ROADMAP.md`; what works today is in `docs/STATUS.md`. OpenSSL sources are not kept here —
-vcpkg fetches and builds them, so this repository holds CI configuration, vcpkg setup, the smoke
-test and the release script.
+vcpkg fetches and builds them, so this repository holds CI configuration, vcpkg setup, the test
+programs and the release script.
 
 ## Settled decisions
 
@@ -75,8 +76,9 @@ Nothing Windows-specific builds in the container (see Pitfalls); CI is the build
 - **Lint before pushing:** `actionlint .github/workflows/ci.yml` and
   `shellcheck release/prepare.sh`. Neither is preinstalled; `pip install actionlint-py
   shellcheck-py` in a venv provides both, and actionlint then also checks the bash `run:` blocks.
-- **Smoke test logic without Windows:** `cc -std=c99 -Wall -Wextra smoke/smoke.c -lssl -lcrypto`
-  against the container's OpenSSL 3 headers, then run the binary.
+- **Test logic without Windows:** `cc -std=c99 -Wall -Wextra -pthread smoke/<test>.c -lssl
+  -lcrypto` (`smoke` or `functional`) against the container's OpenSSL 3, then run the binary.
+  Before trusting a new vector, corrupt it once and confirm its check fails.
 - **Smoke test on Windows:** `./smoke/run.ps1 -Arch x64 -Linkage dll-mt -Config Release
   -OpenSslRoot <unpacked artifact>`; output goes to `smoke/out/`.
 - **Release files without publishing:** `./release/prepare.sh <dir of openssl-<triplet>/>
@@ -114,14 +116,19 @@ Nothing Windows-specific builds in the container (see Pitfalls); CI is the build
     the compiled-in default `OPENSSLDIR`; the port leaves `openssldir` unset on purpose (its
     comment cites CVE-2019-12572). On failure the tails of vcpkg's build logs go into the job log.
   - `smoke` — on a runner of the variant's architecture: downloads the artifact and runs
-    `smoke/run.ps1` for Debug, then for Release even if Debug failed.
+    `smoke/run.ps1` (both test programs) for Debug, then for Release even if Debug failed.
 - `smoke/smoke.c` — the test program: library version against headers, a SHA-256 test vector,
   an AES-256-GCM round trip, a TLS 1.3 handshake between in-process client and server, a BIO on
   the application's stdout (passes in the DLL build only through applink).
-- `smoke/run.ps1` — enters the MSVC environment for the target and compiles `smoke.c` with
-  `/MT` / `/MTd` (plus `applink.c` for `dll-mt`, whose DLLs it copies next to the executable).
-  Rejects any binary of the wrong machine type or importing CRT DLLs; a static build's executable
-  must not import OpenSSL DLLs, a DLL build's must. Then runs the test.
+- `smoke/functional.c` — functional tests: 8 threads hitting OpenSSL from first use;
+  known-answer tests whose vectors come from the RFC or NIST file named beside each one; RSA,
+  ECDSA, ECDH and AEAD round trips that must also reject changed data or another key; the
+  `default` and `legacy` providers (`legacy` is built into `libcrypto` in the static build —
+  the port configures it `no-module` — and is `legacy.dll` in the DLL build).
+- `smoke/run.ps1` — enters the MSVC environment for the target and compiles both programs with
+  `/MT` / `/MTd` (plus `applink.c` for `dll-mt`, whose DLLs it copies next to the executables).
+  Rejects any binary of the wrong machine type or importing CRT DLLs; a static build's executables
+  must not import OpenSSL DLLs, a DLL build's must. Then runs both, even if the first fails.
 - `release/prepare.sh` — checks that all artifacts carry one port version, zips each, writes
   `SHA256SUMS` and `notes.md` (version, upstream tag and commit, source SHA512, port version,
   baseline, revision, archive hashes) and prints the tag and title.
